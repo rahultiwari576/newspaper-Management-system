@@ -1,0 +1,30 @@
+{
+    "name": "newspaper-management-system",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "concurrently \"npm run server\" \"npm run client\"",
+        "server": "node server/index.js",
+        "client": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "migrate": "node server/database/migrate.js",
+        "seed": "node server/database/seed.js"
+    },
+    "dependencies": {
+        "axios": "^1.6.0",
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "react-router-dom": "^6.20.0",
+        "sql.js": "^1.10.3",
+        "uuid": "^13.0.0"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^4.2.0",
+        "concurrently": "^8.2.2",
+        "vite": "^5.0"
+    }
+}
