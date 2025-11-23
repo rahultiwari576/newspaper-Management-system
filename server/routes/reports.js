@@ -1,84 +1,78 @@
 import express from 'express';
-import dbModule from '../database/db.js';
 
+export default function reportsRouter(db) {
 const router = express.Router();
 
-router.get('/customer', async (req, res) => {
+    // Customer report
+router.get('/customer', (req, res) => {
     try {
         const { customer_id, year, month } = req.query;
-        if (!customer_id) {
-            return res.status(400).json({ error: 'customer_id is required' });
-        }
-        
-        const db = await dbModule.getDb();
-        
-        // Get customer
-        const customerResult = db.exec(`SELECT c.*, a.name as area_name, db.name as delivery_boy_name FROM customers c LEFT JOIN areas a ON c.area_id = a.id LEFT JOIN delivery_boys db ON c.delivery_boy_id = db.id WHERE c.id = ${parseInt(customer_id)}`);
-        if (!customerResult[0]?.values.length) {
-            return res.status(404).json({ error: 'Customer not found' });
-        }
-        const custRow = customerResult[0].values[0];
-        const customer = {
-            id: custRow[0],
-            name: custRow[1],
-            phone: custRow[2],
-            email: custRow[3],
-            address: custRow[4],
-            area: custRow[8] ? { name: custRow[8] } : null,
-            delivery_boy: custRow[9] ? { name: custRow[9] } : null,
-        };
-        
-        // Get bills
-        let billQuery = `SELECT * FROM bills WHERE customer_id = ${parseInt(customer_id)}`;
-        if (year) {
-            billQuery += ` AND strftime('%Y', bill_date) = '${year}'`;
-            if (month) {
-                billQuery += ` AND strftime('%m', bill_date) = '${String(month).padStart(2, '0')}'`;
+            if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
+            
+        const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customer_id);
+        if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+            customer.area = db.prepare('SELECT * FROM areas WHERE id = ?').get(customer.area_id);
+            if (customer.delivery_boy_id) {
+                customer.delivery_boy = db.prepare('SELECT * FROM delivery_boys WHERE id = ?').get(customer.delivery_boy_id);
             }
-        }
-        billQuery += ' ORDER BY bill_date DESC';
-        
-        const billsResult = db.exec(billQuery);
-        const bills = billsResult[0]?.values.map(row => ({
-            id: row[0],
-            customer_id: row[1],
-            bill_number: row[2],
-            bill_date: row[3],
-            period_start: row[4],
-            period_end: row[5],
-            total_days: row[6],
-            subtotal: row[7],
-            total_amount: row[8],
-            paid_amount: row[9],
-            due_amount: row[10],
-            status: row[11],
-        })) || [];
-        
-        // Get payments
-        let paymentQuery = `SELECT * FROM payments WHERE customer_id = ${parseInt(customer_id)}`;
-        if (year) {
-            paymentQuery += ` AND strftime('%Y', payment_date) = '${year}'`;
-            if (month) {
-                paymentQuery += ` AND strftime('%m', payment_date) = '${String(month).padStart(2, '0')}'`;
+            
+            const subscriptions = db.prepare(`
+                SELECT s.*, p.name as paper_name, p.price, p.type
+                FROM subscriptions s
+                INNER JOIN papers p ON s.paper_id = p.id
+                WHERE s.customer_id = ?
+            `).all(customer_id);
+            customer.subscriptions = subscriptions;
+            
+            let billsQuery = 'SELECT * FROM bills WHERE customer_id = ?';
+            const billsParams = [customer_id];
+
+            if (year && month) {
+                billsQuery += ' AND strftime("%Y", bill_date) = ? AND strftime("%m", bill_date) = ?';
+                billsParams.push(year, String(month).padStart(2, '0'));
+            } else if (year) {
+                billsQuery += ' AND strftime("%Y", bill_date) = ?';
+                billsParams.push(year);
             }
-        }
-        paymentQuery += ' ORDER BY payment_date DESC';
-        
-        const paymentsResult = db.exec(paymentQuery);
-        const payments = paymentsResult[0]?.values.map(row => ({
-            id: row[0],
-            customer_id: row[1],
-            bill_id: row[2],
-            payment_number: row[3],
-            payment_date: row[4],
-            amount: row[5],
-            payment_method: row[6],
-        })) || [];
-        
-        const totalBilled = bills.reduce((sum, b) => sum + (b.total_amount || 0), 0);
-        const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+            
+            billsQuery += ' ORDER BY bill_date DESC';
+            
+            const bills = db.prepare(billsQuery).all(...billsParams);
+            bills.forEach(bill => {
+                const items = db.prepare(`
+                    SELECT bi.*, p.name as paper_name, p.type
+                    FROM bill_items bi
+                    INNER JOIN papers p ON bi.paper_id = p.id
+                    WHERE bi.bill_id = ?
+                `).all(bill.id);
+                bill.items = items;
+            });
+            
+            let paymentsQuery = 'SELECT * FROM payments WHERE customer_id = ?';
+            const paymentsParams = [customer_id];
+            
+            if (year && month) {
+                paymentsQuery += ' AND strftime("%Y", payment_date) = ? AND strftime("%m", payment_date) = ?';
+                paymentsParams.push(year, String(month).padStart(2, '0'));
+            } else if (year) {
+                paymentsQuery += ' AND strftime("%Y", payment_date) = ?';
+                paymentsParams.push(year);
+            }
+            
+            paymentsQuery += ' ORDER BY payment_date DESC';
+            
+            const payments = db.prepare(paymentsQuery).all(...paymentsParams);
+            payments.forEach(payment => {
+                if (payment.bill_id) {
+                    payment.bill = db.prepare('SELECT bill_number FROM bills WHERE id = ?').get(payment.bill_id);
+                }
+            });
+
+            const totalBilled = bills.reduce((sum, b) => sum + b.total_amount, 0);
+            const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
         const totalDue = totalBilled - totalPaid;
-        
+
         res.json({
             customer,
             bills,
@@ -96,96 +90,88 @@ router.get('/customer', async (req, res) => {
     }
 });
 
-router.get('/area', async (req, res) => {
+    // Area report
+router.get('/area', (req, res) => {
     try {
         const { area_id, year, month } = req.query;
-        if (!area_id) {
-            return res.status(400).json({ error: 'area_id is required' });
-        }
-        
-        const db = await dbModule.getDb();
-        
-        // Get area
-        const areaResult = db.exec(`SELECT * FROM areas WHERE id = ${parseInt(area_id)}`);
-        if (!areaResult[0]?.values.length) {
-            return res.status(404).json({ error: 'Area not found' });
-        }
-        const areaRow = areaResult[0].values[0];
-        const area = {
-            id: areaRow[0],
-            name: areaRow[1],
-            code: areaRow[2],
-            description: areaRow[3],
-        };
-        
-        // Get customer IDs in this area
-        const customersResult = db.exec(`SELECT id FROM customers WHERE area_id = ${parseInt(area_id)}`);
-        const customerIds = customersResult[0]?.values.map(row => row[0]) || [];
-        
+            if (!area_id) return res.status(400).json({ error: 'area_id is required' });
+            
+        const area = db.prepare('SELECT * FROM areas WHERE id = ?').get(area_id);
+        if (!area) return res.status(404).json({ error: 'Area not found' });
+            
+            const deliveryBoys = db.prepare(`
+                SELECT d.* FROM delivery_boys d
+                INNER JOIN area_delivery_boy adb ON d.id = adb.delivery_boy_id
+                WHERE adb.area_id = ?
+            `).all(area_id);
+            area.delivery_boys = deliveryBoys;
+
+        const customerIds = db.prepare('SELECT id FROM customers WHERE area_id = ?').all(area_id).map(c => c.id);
+            const customerCount = customerIds.length;
+            
         if (customerIds.length === 0) {
-            return res.json({
-                area,
-                customer_count: 0,
-                bills: [],
-                payments: [],
-                summary: { total_billed: 0, total_paid: 0, total_due: 0, bill_count: 0, payment_count: 0 },
+                return res.json({
+                    area,
+                    customer_count: 0,
+                    bills: [],
+                    payments: [],
+                    summary: { total_billed: 0, total_paid: 0, total_due: 0, bill_count: 0, payment_count: 0 },
+                });
+        }
+
+            let billsQuery = `SELECT b.*, c.name as customer_name FROM bills b INNER JOIN customers c ON b.customer_id = c.id WHERE b.customer_id IN (${customerIds.map(() => '?').join(',')})`;
+            const billsParams = [...customerIds];
+
+            if (year && month) {
+                billsQuery += ' AND strftime("%Y", b.bill_date) = ? AND strftime("%m", b.bill_date) = ?';
+                billsParams.push(year, String(month).padStart(2, '0'));
+            } else if (year) {
+                billsQuery += ' AND strftime("%Y", b.bill_date) = ?';
+                billsParams.push(year);
+            }
+            
+            billsQuery += ' ORDER BY b.bill_date DESC';
+
+            const bills = db.prepare(billsQuery).all(...billsParams);
+            bills.forEach(bill => {
+                bill.customer = { name: bill.customer_name };
+                const items = db.prepare(`
+                    SELECT bi.*, p.name as paper_name, p.type
+                    FROM bill_items bi
+                    INNER JOIN papers p ON bi.paper_id = p.id
+                    WHERE bi.bill_id = ?
+                `).all(bill.id);
+                bill.items = items;
             });
-        }
-        
-        // Get bills
-        let billQuery = `SELECT * FROM bills WHERE customer_id IN (${customerIds.join(',')})`;
-        if (year) {
-            billQuery += ` AND strftime('%Y', bill_date) = '${year}'`;
-            if (month) {
-                billQuery += ` AND strftime('%m', bill_date) = '${String(month).padStart(2, '0')}'`;
+            
+            let paymentsQuery = `SELECT p.*, c.name as customer_name FROM payments p INNER JOIN customers c ON p.customer_id = c.id WHERE p.customer_id IN (${customerIds.map(() => '?').join(',')})`;
+            const paymentsParams = [...customerIds];
+            
+            if (year && month) {
+                paymentsQuery += ' AND strftime("%Y", p.payment_date) = ? AND strftime("%m", p.payment_date) = ?';
+                paymentsParams.push(year, String(month).padStart(2, '0'));
+            } else if (year) {
+                paymentsQuery += ' AND strftime("%Y", p.payment_date) = ?';
+                paymentsParams.push(year);
             }
-        }
-        billQuery += ' ORDER BY bill_date DESC';
-        
-        const billsResult = db.exec(billQuery);
-        const bills = billsResult[0]?.values.map(row => ({
-            id: row[0],
-            customer_id: row[1],
-            bill_number: row[2],
-            bill_date: row[3],
-            period_start: row[4],
-            period_end: row[5],
-            total_days: row[6],
-            subtotal: row[7],
-            total_amount: row[8],
-            paid_amount: row[9],
-            due_amount: row[10],
-            status: row[11],
-        })) || [];
-        
-        // Get payments
-        let paymentQuery = `SELECT * FROM payments WHERE customer_id IN (${customerIds.join(',')})`;
-        if (year) {
-            paymentQuery += ` AND strftime('%Y', payment_date) = '${year}'`;
-            if (month) {
-                paymentQuery += ` AND strftime('%m', payment_date) = '${String(month).padStart(2, '0')}'`;
-            }
-        }
-        paymentQuery += ' ORDER BY payment_date DESC';
-        
-        const paymentsResult = db.exec(paymentQuery);
-        const payments = paymentsResult[0]?.values.map(row => ({
-            id: row[0],
-            customer_id: row[1],
-            bill_id: row[2],
-            payment_number: row[3],
-            payment_date: row[4],
-            amount: row[5],
-            payment_method: row[6],
-        })) || [];
-        
-        const totalBilled = bills.reduce((sum, b) => sum + (b.total_amount || 0), 0);
-        const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+            
+            paymentsQuery += ' ORDER BY p.payment_date DESC';
+            
+            const payments = db.prepare(paymentsQuery).all(...paymentsParams);
+            payments.forEach(payment => {
+                payment.customer = { name: payment.customer_name };
+                if (payment.bill_id) {
+                    payment.bill = db.prepare('SELECT bill_number FROM bills WHERE id = ?').get(payment.bill_id);
+                }
+            });
+
+            const totalBilled = bills.reduce((sum, b) => sum + b.total_amount, 0);
+            const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
         const totalDue = totalBilled - totalPaid;
-        
+
         res.json({
             area,
-            customer_count: customerIds.length,
+                customer_count: customerCount,
             bills,
             payments,
             summary: {
@@ -201,97 +187,88 @@ router.get('/area', async (req, res) => {
     }
 });
 
-router.get('/delivery-boy', async (req, res) => {
+    // Delivery boy report
+router.get('/delivery-boy', (req, res) => {
     try {
         const { delivery_boy_id, year, month } = req.query;
-        if (!delivery_boy_id) {
-            return res.status(400).json({ error: 'delivery_boy_id is required' });
-        }
-        
-        const db = await dbModule.getDb();
-        
-        // Get delivery boy
-        const dbResult = db.exec(`SELECT * FROM delivery_boys WHERE id = ${parseInt(delivery_boy_id)}`);
-        if (!dbResult[0]?.values.length) {
-            return res.status(404).json({ error: 'Delivery boy not found' });
-        }
-        const dbRow = dbResult[0].values[0];
-        const deliveryBoy = {
-            id: dbRow[0],
-            name: dbRow[1],
-            phone: dbRow[2],
-            email: dbRow[3],
-            address: dbRow[4],
-        };
-        
-        // Get customer IDs for this delivery boy
-        const customersResult = db.exec(`SELECT id FROM customers WHERE delivery_boy_id = ${parseInt(delivery_boy_id)}`);
-        const customerIds = customersResult[0]?.values.map(row => row[0]) || [];
-        
+            if (!delivery_boy_id) return res.status(400).json({ error: 'delivery_boy_id is required' });
+            
+        const deliveryBoy = db.prepare('SELECT * FROM delivery_boys WHERE id = ?').get(delivery_boy_id);
+        if (!deliveryBoy) return res.status(404).json({ error: 'Delivery boy not found' });
+            
+            const areas = db.prepare(`
+                SELECT a.* FROM areas a
+                INNER JOIN area_delivery_boy adb ON a.id = adb.area_id
+                WHERE adb.delivery_boy_id = ?
+            `).all(delivery_boy_id);
+            deliveryBoy.areas = areas;
+
+        const customerIds = db.prepare('SELECT id FROM customers WHERE delivery_boy_id = ?').all(delivery_boy_id).map(c => c.id);
+            const customerCount = customerIds.length;
+            
         if (customerIds.length === 0) {
-            return res.json({
-                delivery_boy: deliveryBoy,
-                customer_count: 0,
-                bills: [],
-                payments: [],
-                summary: { total_billed: 0, total_paid: 0, total_due: 0, bill_count: 0, payment_count: 0 },
+                return res.json({
+                    delivery_boy: deliveryBoy,
+                    customer_count: 0,
+                    bills: [],
+                    payments: [],
+                    summary: { total_billed: 0, total_paid: 0, total_due: 0, bill_count: 0, payment_count: 0 },
+                });
+        }
+
+            let billsQuery = `SELECT b.*, c.name as customer_name FROM bills b INNER JOIN customers c ON b.customer_id = c.id WHERE b.customer_id IN (${customerIds.map(() => '?').join(',')})`;
+            const billsParams = [...customerIds];
+
+            if (year && month) {
+                billsQuery += ' AND strftime("%Y", b.bill_date) = ? AND strftime("%m", b.bill_date) = ?';
+                billsParams.push(year, String(month).padStart(2, '0'));
+            } else if (year) {
+                billsQuery += ' AND strftime("%Y", b.bill_date) = ?';
+                billsParams.push(year);
+            }
+            
+            billsQuery += ' ORDER BY b.bill_date DESC';
+
+            const bills = db.prepare(billsQuery).all(...billsParams);
+            bills.forEach(bill => {
+                bill.customer = { name: bill.customer_name };
+                const items = db.prepare(`
+                    SELECT bi.*, p.name as paper_name, p.type
+                    FROM bill_items bi
+                    INNER JOIN papers p ON bi.paper_id = p.id
+                    WHERE bi.bill_id = ?
+                `).all(bill.id);
+                bill.items = items;
             });
-        }
-        
-        // Get bills
-        let billQuery = `SELECT * FROM bills WHERE customer_id IN (${customerIds.join(',')})`;
-        if (year) {
-            billQuery += ` AND strftime('%Y', bill_date) = '${year}'`;
-            if (month) {
-                billQuery += ` AND strftime('%m', bill_date) = '${String(month).padStart(2, '0')}'`;
+            
+            let paymentsQuery = `SELECT p.*, c.name as customer_name FROM payments p INNER JOIN customers c ON p.customer_id = c.id WHERE p.customer_id IN (${customerIds.map(() => '?').join(',')})`;
+            const paymentsParams = [...customerIds];
+            
+            if (year && month) {
+                paymentsQuery += ' AND strftime("%Y", p.payment_date) = ? AND strftime("%m", p.payment_date) = ?';
+                paymentsParams.push(year, String(month).padStart(2, '0'));
+            } else if (year) {
+                paymentsQuery += ' AND strftime("%Y", p.payment_date) = ?';
+                paymentsParams.push(year);
             }
-        }
-        billQuery += ' ORDER BY bill_date DESC';
-        
-        const billsResult = db.exec(billQuery);
-        const bills = billsResult[0]?.values.map(row => ({
-            id: row[0],
-            customer_id: row[1],
-            bill_number: row[2],
-            bill_date: row[3],
-            period_start: row[4],
-            period_end: row[5],
-            total_days: row[6],
-            subtotal: row[7],
-            total_amount: row[8],
-            paid_amount: row[9],
-            due_amount: row[10],
-            status: row[11],
-        })) || [];
-        
-        // Get payments
-        let paymentQuery = `SELECT * FROM payments WHERE customer_id IN (${customerIds.join(',')})`;
-        if (year) {
-            paymentQuery += ` AND strftime('%Y', payment_date) = '${year}'`;
-            if (month) {
-                paymentQuery += ` AND strftime('%m', payment_date) = '${String(month).padStart(2, '0')}'`;
-            }
-        }
-        paymentQuery += ' ORDER BY payment_date DESC';
-        
-        const paymentsResult = db.exec(paymentQuery);
-        const payments = paymentsResult[0]?.values.map(row => ({
-            id: row[0],
-            customer_id: row[1],
-            bill_id: row[2],
-            payment_number: row[3],
-            payment_date: row[4],
-            amount: row[5],
-            payment_method: row[6],
-        })) || [];
-        
-        const totalBilled = bills.reduce((sum, b) => sum + (b.total_amount || 0), 0);
-        const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+            
+            paymentsQuery += ' ORDER BY p.payment_date DESC';
+            
+            const payments = db.prepare(paymentsQuery).all(...paymentsParams);
+            payments.forEach(payment => {
+                payment.customer = { name: payment.customer_name };
+                if (payment.bill_id) {
+                    payment.bill = db.prepare('SELECT bill_number FROM bills WHERE id = ?').get(payment.bill_id);
+                }
+            });
+
+            const totalBilled = bills.reduce((sum, b) => sum + b.total_amount, 0);
+            const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
         const totalDue = totalBilled - totalPaid;
-        
+
         res.json({
             delivery_boy: deliveryBoy,
-            customer_count: customerIds.length,
+                customer_count: customerCount,
             bills,
             payments,
             summary: {
@@ -307,4 +284,5 @@ router.get('/delivery-boy', async (req, res) => {
     }
 });
 
-export default router;
+    return router;
+}

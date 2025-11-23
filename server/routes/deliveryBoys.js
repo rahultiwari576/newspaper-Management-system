@@ -1,91 +1,85 @@
 import express from 'express';
-import dbModule from '../database/db.js';
 
+export default function deliveryBoysRouter(db) {
 const router = express.Router();
 
-router.get('/', async (req, res) => {
+    // Get all delivery boys with areas
+router.get('/', (req, res) => {
     try {
-        const db = await dbModule.getDb();
-        const result = db.exec('SELECT * FROM delivery_boys ORDER BY name');
-        const deliveryBoys = result[0]?.values.map(row => ({
-            id: row[0],
-            name: row[1],
-            phone: row[2],
-            email: row[3],
-            address: row[4],
-            is_active: row[5] === 1,
-        })) || [];
+        const deliveryBoys = db.prepare('SELECT * FROM delivery_boys ORDER BY name').all();
+            deliveryBoys.forEach(db => {
+                const areas = db.prepare(`
+                    SELECT a.* FROM areas a
+                    INNER JOIN area_delivery_boy adb ON a.id = adb.area_id
+                    WHERE adb.delivery_boy_id = ?
+                `).all(db.id);
+                db.areas = areas;
+            });
         res.json(deliveryBoys);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-router.post('/', async (req, res) => {
+    // Get single delivery boy
+router.get('/:id', (req, res) => {
     try {
-        const { name, phone, email, address, is_active } = req.body;
-        const db = await dbModule.getDb();
-        const isActive = is_active !== undefined ? (is_active ? 1 : 0) : 1;
-        db.run(`INSERT INTO delivery_boys (name, phone, email, address, is_active) VALUES ('${name.replace(/'/g, "''")}', '${phone}', ${email ? `'${email.replace(/'/g, "''")}'` : 'NULL'}, ${address ? `'${address.replace(/'/g, "''")}'` : 'NULL'}, ${isActive})`);
-        const result = db.exec('SELECT last_insert_rowid() as id');
-        const id = result[0].values[0][0];
-        dbModule.saveDatabase();
-        res.status(201).json({ id, name, phone, email, address, is_active: isActive === 1 });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-router.get('/:id', async (req, res) => {
-    try {
-        const db = await dbModule.getDb();
-        const result = db.exec(`SELECT * FROM delivery_boys WHERE id = ${parseInt(req.params.id)}`);
-        if (!result || !result.length || !result[0].values.length) {
-            return res.status(404).json({ error: 'Delivery boy not found' });
-        }
-        const row = result[0].values[0];
-        res.json({
-            id: row[0],
-            name: row[1],
-            phone: row[2],
-            email: row[3],
-            address: row[4],
-            is_active: row[5] === 1,
-        });
+            const deliveryBoy = db.prepare('SELECT * FROM delivery_boys WHERE id = ?').get(req.params.id);
+            if (!deliveryBoy) return res.status(404).json({ error: 'Delivery boy not found' });
+            
+            const areas = db.prepare(`
+                SELECT a.* FROM areas a
+                INNER JOIN area_delivery_boy adb ON a.id = adb.area_id
+                WHERE adb.delivery_boy_id = ?
+            `).all(deliveryBoy.id);
+            deliveryBoy.areas = areas;
+            
+            const customers = db.prepare('SELECT * FROM customers WHERE delivery_boy_id = ?').all(deliveryBoy.id);
+            deliveryBoy.customers = customers;
+            
+            res.json(deliveryBoy);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-router.put('/:id', async (req, res) => {
+    // Create delivery boy
+router.post('/', (req, res) => {
     try {
         const { name, phone, email, address, is_active } = req.body;
-        const db = await dbModule.getDb();
-        const updates = [];
-        if (name !== undefined) updates.push(`name = '${name.replace(/'/g, "''")}'`);
-        if (phone !== undefined) updates.push(`phone = '${phone}'`);
-        if (email !== undefined) updates.push(`email = ${email ? `'${email.replace(/'/g, "''")}'` : 'NULL'}`);
-        if (address !== undefined) updates.push(`address = ${address ? `'${address.replace(/'/g, "''")}'` : 'NULL'}`);
-        if (is_active !== undefined) updates.push(`is_active = ${is_active ? 1 : 0}`);
-        updates.push('updated_at = CURRENT_TIMESTAMP');
-        
-        db.run(`UPDATE delivery_boys SET ${updates.join(', ')} WHERE id = ${parseInt(req.params.id)}`);
-        dbModule.saveDatabase();
-        res.json({ message: 'Delivery boy updated successfully' });
+            const result = db.prepare('INSERT INTO delivery_boys (name, phone, email, address, is_active) VALUES (?, ?, ?, ?, ?)')
+                .run(name, phone, email, address, is_active ?? 1);
+            const deliveryBoy = db.prepare('SELECT * FROM delivery_boys WHERE id = ?').get(result.lastInsertRowid);
+            res.status(201).json(deliveryBoy);
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(500).json({ error: error.message });
     }
 });
 
-router.delete('/:id', async (req, res) => {
+    // Update delivery boy
+router.put('/:id', (req, res) => {
     try {
-        const db = await dbModule.getDb();
-        db.run(`DELETE FROM delivery_boys WHERE id = ${parseInt(req.params.id)}`);
-        dbModule.saveDatabase();
+        const { name, phone, email, address, is_active } = req.body;
+            db.prepare('UPDATE delivery_boys SET name = ?, phone = ?, email = ?, address = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(name, phone, email, address, is_active, req.params.id);
+            const deliveryBoy = db.prepare('SELECT * FROM delivery_boys WHERE id = ?').get(req.params.id);
+            if (!deliveryBoy) return res.status(404).json({ error: 'Delivery boy not found' });
+            res.json(deliveryBoy);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+    // Delete delivery boy
+router.delete('/:id', (req, res) => {
+    try {
+            const result = db.prepare('DELETE FROM delivery_boys WHERE id = ?').run(req.params.id);
+            if (result.changes === 0) return res.status(404).json({ error: 'Delivery boy not found' });
         res.json({ message: 'Delivery boy deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-export default router;
+    return router;
+}

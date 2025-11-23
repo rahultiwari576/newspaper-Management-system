@@ -1,27 +1,22 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import fs from 'fs';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const dbPath = path.join(__dirname, '../../database.sqlite');
-let db;
-
-export function getDatabase() {
-    if (!db) {
-        db = new Database(dbPath);
-        db.pragma('foreign_keys = ON');
-    }
-    return db;
-}
-
-export function initDatabase() {
-    const db = getDatabase();
+export function initDatabase(db) {
+    // Enable foreign keys
+    db.pragma('foreign_keys = ON');
     
-    // Create tables
+    // Users table
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            role TEXT DEFAULT 'admin' CHECK(role IN ('admin', 'manager', 'staff')),
+            is_active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    
+    // Papers table
     db.exec(`
         CREATE TABLE IF NOT EXISTS papers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,8 +26,11 @@ export function initDatabase() {
             is_active INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
+        )
+    `);
+    
+    // Areas table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS areas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -41,8 +39,11 @@ export function initDatabase() {
             is_active INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
+        )
+    `);
+    
+    // Delivery boys table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS delivery_boys (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -52,8 +53,24 @@ export function initDatabase() {
             is_active INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
+        )
+    `);
+    
+    // Area-Delivery Boy pivot table
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS area_delivery_boy (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            area_id INTEGER NOT NULL,
+            delivery_boy_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE CASCADE,
+            FOREIGN KEY (delivery_boy_id) REFERENCES delivery_boys(id) ON DELETE CASCADE,
+            UNIQUE(area_id, delivery_boy_id)
+        )
+    `);
+    
+    // Customers table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -65,10 +82,13 @@ export function initDatabase() {
             is_active INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE RESTRICT,
-            FOREIGN KEY (delivery_boy_id) REFERENCES delivery_boys(id) ON DELETE SET NULL
-        );
-
+            FOREIGN KEY (area_id) REFERENCES areas(id),
+            FOREIGN KEY (delivery_boy_id) REFERENCES delivery_boys(id)
+        )
+    `);
+    
+    // Subscriptions table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS subscriptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_id INTEGER NOT NULL,
@@ -79,9 +99,12 @@ export function initDatabase() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-            FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE RESTRICT
-        );
-
+            FOREIGN KEY (paper_id) REFERENCES papers(id)
+        )
+    `);
+    
+    // Bills table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS bills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_id INTEGER NOT NULL,
@@ -99,8 +122,11 @@ export function initDatabase() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
-        );
-
+        )
+    `);
+    
+    // Bill items table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS bill_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bill_id INTEGER NOT NULL,
@@ -109,11 +135,13 @@ export function initDatabase() {
             rate REAL NOT NULL,
             amount REAL NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (bill_id) REFERENCES bills(id) ON DELETE CASCADE,
-            FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE RESTRICT
-        );
-
+            FOREIGN KEY (paper_id) REFERENCES papers(id)
+        )
+    `);
+    
+    // Payments table
+    db.exec(`
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_id INTEGER NOT NULL,
@@ -126,30 +154,9 @@ export function initDatabase() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-            FOREIGN KEY (bill_id) REFERENCES bills(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS area_delivery_boy (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            area_id INTEGER NOT NULL,
-            delivery_boy_id INTEGER NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(area_id, delivery_boy_id),
-            FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE CASCADE,
-            FOREIGN KEY (delivery_boy_id) REFERENCES delivery_boys(id) ON DELETE CASCADE
-        );
+            FOREIGN KEY (bill_id) REFERENCES bills(id)
+        )
     `);
-
-    // Seed initial data if tables are empty
-    const paperCount = db.prepare('SELECT COUNT(*) as count FROM papers').get();
-    if (paperCount.count === 0) {
-        const insertPaper = db.prepare('INSERT INTO papers (name, price, type) VALUES (?, ?, ?)');
-        insertPaper.run('The Times', 5.00, 'daily');
-        insertPaper.run('Daily News', 4.50, 'daily');
-        insertPaper.run('Morning Herald', 6.00, 'daily');
-        insertPaper.run('Weekly Magazine', 25.00, 'weekly');
-    }
-
-    console.log('Database initialized successfully');
+    
+    console.log('✅ Database initialized successfully');
 }
-

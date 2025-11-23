@@ -1,0 +1,270 @@
+import { initDatabase, saveDatabase } from './dbAdapter.js';
+import bcrypt from 'bcryptjs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+async function seed() {
+    console.log('Seeding database...');
+    
+    const dbPath = join(__dirname, '../../database/newspaper.db');
+    const db = await initDatabase(dbPath);
+    
+    try {
+        // Initialize schema first
+        const { initDatabase: initSchema } = await import('./init.js');
+        initSchema(db);
+        
+        // Clear existing data (in correct order due to foreign keys)
+        db.exec('DELETE FROM area_delivery_boy');
+        db.exec('DELETE FROM subscriptions');
+        db.exec('DELETE FROM payments');
+        db.exec('DELETE FROM bill_items');
+        db.exec('DELETE FROM bills');
+        db.exec('DELETE FROM customers');
+        db.exec('DELETE FROM delivery_boys');
+        db.exec('DELETE FROM areas');
+        db.exec('DELETE FROM papers');
+        db.exec('DELETE FROM users');
+
+        // Insert Users
+        const defaultPassword = await bcrypt.hash('password123', 10);
+        const users = [
+            ['Admin User', 'admin@newspaper.com', defaultPassword, 'admin'],
+            ['Manager User', 'manager@newspaper.com', defaultPassword, 'manager'],
+            ['Staff User', 'staff@newspaper.com', defaultPassword, 'staff'],
+        ];
+        
+        users.forEach(user => {
+            db.prepare(`
+                INSERT INTO users (name, email, password, role)
+                VALUES (?, ?, ?, ?)
+            `).run(user[0], user[1], user[2], user[3]);
+        });
+        console.log('✓ Users seeded');
+
+        // Insert Papers
+        const papers = [
+            ['The Times', 5.00, 'daily'],
+            ['Daily News', 4.50, 'daily'],
+            ['Morning Herald', 6.00, 'daily'],
+            ['Evening Post', 5.50, 'daily'],
+            ['Weekly Magazine', 25.00, 'weekly'],
+            ['Sunday Special', 30.00, 'weekly'],
+        ];
+        
+        const paperIds = [];
+        papers.forEach(paper => {
+            const result = db.prepare('INSERT INTO papers (name, price, type) VALUES (?, ?, ?)')
+                .run(paper[0], paper[1], paper[2]);
+            paperIds.push(Number(result.lastInsertRowid));
+        });
+        console.log('✓ Papers seeded');
+
+        // Insert Areas
+        const areas = [
+            ['Downtown', 'DT001', 'Downtown commercial area'],
+            ['Uptown', 'UT001', 'Uptown residential area'],
+            ['Suburbs', 'SB001', 'Suburban residential area'],
+            ['East Side', 'ES001', 'East side neighborhood'],
+            ['West Side', 'WS001', 'West side neighborhood'],
+        ];
+        
+        const areaIds = [];
+        areas.forEach(area => {
+            const result = db.prepare('INSERT INTO areas (name, code, description) VALUES (?, ?, ?)')
+                .run(area[0], area[1], area[2]);
+            areaIds.push(Number(result.lastInsertRowid));
+        });
+        console.log('✓ Areas seeded');
+
+        // Insert Delivery Boys
+        const deliveryBoys = [
+            ['John Doe', '1234567890', 'john@example.com', '123 Main St'],
+            ['Jane Smith', '0987654321', 'jane@example.com', '456 Oak Ave'],
+            ['Mike Johnson', '1122334455', 'mike@example.com', '789 Pine St'],
+            ['Sarah Williams', '2233445566', 'sarah@example.com', '321 Elm St'],
+            ['Tom Brown', '3344556677', 'tom@example.com', '654 Maple Ave'],
+        ];
+        
+        const dbIds = [];
+        deliveryBoys.forEach(deliveryBoy => {
+            const result = db.prepare(`
+                INSERT INTO delivery_boys (name, phone, email, address)
+                VALUES (?, ?, ?, ?)
+            `).run(deliveryBoy[0], deliveryBoy[1], deliveryBoy[2], deliveryBoy[3]);
+            dbIds.push(Number(result.lastInsertRowid));
+        });
+        console.log('✓ Delivery boys seeded');
+
+        // Assign delivery boys to areas
+        db.prepare('INSERT INTO area_delivery_boy (area_id, delivery_boy_id) VALUES (?, ?)')
+            .run(areaIds[0], dbIds[0]);
+        db.prepare('INSERT INTO area_delivery_boy (area_id, delivery_boy_id) VALUES (?, ?)')
+            .run(areaIds[1], dbIds[1]);
+        db.prepare('INSERT INTO area_delivery_boy (area_id, delivery_boy_id) VALUES (?, ?)')
+            .run(areaIds[2], dbIds[2]);
+        db.prepare('INSERT INTO area_delivery_boy (area_id, delivery_boy_id) VALUES (?, ?)')
+            .run(areaIds[3], dbIds[3]);
+        db.prepare('INSERT INTO area_delivery_boy (area_id, delivery_boy_id) VALUES (?, ?)')
+            .run(areaIds[4], dbIds[4]);
+        db.prepare('INSERT INTO area_delivery_boy (area_id, delivery_boy_id) VALUES (?, ?)')
+            .run(areaIds[0], dbIds[1]); // Multiple delivery boys for downtown
+        console.log('✓ Area-delivery boy assignments seeded');
+
+        // Insert Customers
+        const customers = [
+            ['Alice Johnson', '1111111111', 'alice@example.com', '789 Pine St', areaIds[0], dbIds[0]],
+            ['Bob Williams', '2222222222', 'bob@example.com', '321 Elm St', areaIds[1], dbIds[1]],
+            ['Charlie Brown', '3333333333', 'charlie@example.com', '654 Maple Ave', areaIds[2], dbIds[2]],
+            ['Diana Prince', '4444444444', 'diana@example.com', '987 Oak St', areaIds[3], dbIds[3]],
+            ['Edward Lee', '5555555555', 'edward@example.com', '147 Cedar Ln', areaIds[4], dbIds[4]],
+            ['Fiona Green', '6666666666', 'fiona@example.com', '258 Birch Dr', areaIds[0], dbIds[0]],
+            ['George White', '7777777777', 'george@example.com', '369 Spruce Way', areaIds[1], dbIds[1]],
+            ['Helen Black', '8888888888', 'helen@example.com', '470 Willow Rd', areaIds[2], dbIds[2]],
+        ];
+        
+        const customerIds = [];
+        customers.forEach(customer => {
+            const result = db.prepare(`
+                INSERT INTO customers (name, phone, email, address, area_id, delivery_boy_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            `).run(customer[0], customer[1], customer[2], customer[3], customer[4], customer[5]);
+            customerIds.push(Number(result.lastInsertRowid));
+        });
+        console.log('✓ Customers seeded');
+
+        // Insert Subscriptions
+        const insertSub = db.prepare(`
+            INSERT INTO subscriptions (customer_id, paper_id, start_date)
+            VALUES (?, ?, date('now', '-' || ? || ' days'))
+        `);
+        
+        insertSub.run(customerIds[0], paperIds[0], 30);
+        insertSub.run(customerIds[0], paperIds[1], 30);
+        insertSub.run(customerIds[1], paperIds[0], 60);
+        insertSub.run(customerIds[1], paperIds[2], 60);
+        insertSub.run(customerIds[2], paperIds[1], 45);
+        insertSub.run(customerIds[2], paperIds[4], 45);
+        insertSub.run(customerIds[3], paperIds[0], 90);
+        insertSub.run(customerIds[3], paperIds[1], 90);
+        insertSub.run(customerIds[3], paperIds[2], 90);
+        insertSub.run(customerIds[4], paperIds[2], 20);
+        insertSub.run(customerIds[5], paperIds[0], 15);
+        insertSub.run(customerIds[5], paperIds[5], 15);
+        insertSub.run(customerIds[6], paperIds[1], 75);
+        insertSub.run(customerIds[7], paperIds[3], 10);
+        console.log('✓ Subscriptions seeded');
+
+        // Insert Bills
+        const today = new Date().toISOString().split('T')[0];
+        const lastMonth = new Date();
+        lastMonth.setMonth(lastMonth.getMonth() - 1);
+        const lastMonthStr = lastMonth.toISOString().split('T')[0];
+        
+        const insertBill = db.prepare(`
+            INSERT INTO bills (
+                customer_id, bill_number, bill_date, period_start, period_end,
+                total_days, subtotal, total_amount, paid_amount, due_amount, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        
+        const billIds = [];
+        
+        // Bill 1 - Paid
+        const bill1Id = insertBill.run(
+            customerIds[0], 'BILL-001', lastMonthStr, lastMonthStr, today,
+            30, 300.00, 300.00, 300.00, 0.00, 'paid'
+        ).lastInsertRowid;
+        billIds.push(Number(bill1Id));
+        
+        // Bill 2 - Partial
+        const bill2Id = insertBill.run(
+            customerIds[1], 'BILL-002', lastMonthStr, lastMonthStr, today,
+            30, 450.00, 450.00, 200.00, 250.00, 'partial'
+        ).lastInsertRowid;
+        billIds.push(Number(bill2Id));
+        
+        // Bill 3 - Pending
+        const bill3Id = insertBill.run(
+            customerIds[2], 'BILL-003', lastMonthStr, lastMonthStr, today,
+            30, 225.00, 225.00, 0.00, 225.00, 'pending'
+        ).lastInsertRowid;
+        billIds.push(Number(bill3Id));
+        
+        // Bill 4 - Paid
+        const bill4Id = insertBill.run(
+            customerIds[3], 'BILL-004', lastMonthStr, lastMonthStr, today,
+            30, 600.00, 600.00, 600.00, 0.00, 'paid'
+        ).lastInsertRowid;
+        billIds.push(Number(bill4Id));
+        
+        // Bill 5 - Pending
+        const bill5Id = insertBill.run(
+            customerIds[4], 'BILL-005', lastMonthStr, lastMonthStr, today,
+            30, 180.00, 180.00, 0.00, 180.00, 'pending'
+        ).lastInsertRowid;
+        billIds.push(Number(bill5Id));
+        
+        console.log('✓ Bills seeded');
+
+        // Insert Bill Items
+        const insertBillItem = db.prepare(`
+            INSERT INTO bill_items (bill_id, paper_id, days, rate, amount)
+            VALUES (?, ?, ?, ?, ?)
+        `);
+        
+        insertBillItem.run(billIds[0], paperIds[0], 30, 5.00, 150.00);
+        insertBillItem.run(billIds[0], paperIds[1], 30, 4.50, 135.00);
+        insertBillItem.run(billIds[1], paperIds[0], 30, 5.00, 150.00);
+        insertBillItem.run(billIds[1], paperIds[2], 30, 6.00, 180.00);
+        insertBillItem.run(billIds[1], paperIds[1], 30, 4.50, 135.00);
+        insertBillItem.run(billIds[2], paperIds[1], 30, 4.50, 135.00);
+        insertBillItem.run(billIds[2], paperIds[4], 4, 25.00, 100.00);
+        insertBillItem.run(billIds[3], paperIds[0], 30, 5.00, 150.00);
+        insertBillItem.run(billIds[3], paperIds[1], 30, 4.50, 135.00);
+        insertBillItem.run(billIds[3], paperIds[2], 30, 6.00, 180.00);
+        insertBillItem.run(billIds[3], paperIds[3], 30, 5.50, 165.00);
+        insertBillItem.run(billIds[4], paperIds[2], 30, 6.00, 180.00);
+        
+        console.log('✓ Bill items seeded');
+
+        // Insert Payments
+        const insertPayment = db.prepare(`
+            INSERT INTO payments (
+                customer_id, bill_id, payment_number, payment_date,
+                amount, payment_method, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        
+        insertPayment.run(customerIds[0], billIds[0], 'PAY-001', lastMonthStr, 300.00, 'cash', 'Full payment for Bill-001');
+        insertPayment.run(customerIds[1], billIds[1], 'PAY-002', lastMonthStr, 200.00, 'bank_transfer', 'Partial payment for Bill-002');
+        insertPayment.run(customerIds[3], billIds[3], 'PAY-003', lastMonthStr, 600.00, 'online', 'Full payment for Bill-004');
+        insertPayment.run(customerIds[5], null, 'PAY-004', today, 500.00, 'cash', 'Advance payment');
+        insertPayment.run(customerIds[6], null, 'PAY-005', today, 250.00, 'cheque', 'Monthly payment');
+        
+        console.log('✓ Payments seeded');
+
+        // Force save after seeding
+        const { saveDatabase } = await import('./dbAdapter.js');
+        saveDatabase();
+        console.log('✓ Database seeded successfully!');
+        console.log('\n📝 Test Credentials:');
+        console.log('   Email: admin@newspaper.com');
+        console.log('   Password: password123');
+        console.log('\n   Email: manager@newspaper.com');
+        console.log('   Password: password123');
+        console.log('\n   Email: staff@newspaper.com');
+        console.log('   Password: password123');
+    } catch (error) {
+        console.error('✗ Seeding failed:', error);
+        process.exit(1);
+    }
+}
+
+seed();
+

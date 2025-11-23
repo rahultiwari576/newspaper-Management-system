@@ -1,115 +1,66 @@
 import express from 'express';
-import dbModule from '../database/db.js';
 
+export default function papersRouter(db) {
 const router = express.Router();
 
-// GET all papers
-router.get('/', async (req, res) => {
+    // Get all papers
+router.get('/', (req, res) => {
     try {
-        const db = await dbModule.getDb();
-        const result = db.exec('SELECT * FROM papers ORDER BY name');
-        if (!result || !result.length) {
-            return res.json([]);
-        }
-        const papers = result[0].values.map(row => ({
-            id: row[0],
-            name: row[1],
-            price: row[2],
-            type: row[3],
-            is_active: row[4] === 1,
-            created_at: row[5],
-            updated_at: row[6],
-        }));
+        const papers = db.prepare('SELECT * FROM papers ORDER BY name').all();
         res.json(papers);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// GET single paper
-router.get('/:id', async (req, res) => {
+    // Get single paper
+router.get('/:id', (req, res) => {
     try {
-        const db = await dbModule.getDb();
-        const result = db.exec(`SELECT * FROM papers WHERE id = ${parseInt(req.params.id)}`);
-        if (!result || !result.length || !result[0].values.length) {
-            return res.status(404).json({ error: 'Paper not found' });
-        }
-        const row = result[0].values[0];
-        res.json({
-            id: row[0],
-            name: row[1],
-            price: row[2],
-            type: row[3],
-            is_active: row[4] === 1,
-            created_at: row[5],
-            updated_at: row[6],
-        });
+        const paper = db.prepare('SELECT * FROM papers WHERE id = ?').get(req.params.id);
+            if (!paper) return res.status(404).json({ error: 'Paper not found' });
+        res.json(paper);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// POST create paper
-router.post('/', async (req, res) => {
+    // Create paper
+router.post('/', (req, res) => {
     try {
         const { name, price, type, is_active } = req.body;
-        const db = await dbModule.getDb();
-        const isActive = is_active !== undefined ? (is_active ? 1 : 0) : 1;
-        const paperType = type || 'daily';
-        db.run(`INSERT INTO papers (name, price, type, is_active) VALUES ('${name.replace(/'/g, "''")}', ${price}, '${paperType}', ${isActive})`);
-        const result = db.exec('SELECT last_insert_rowid() as id');
-        const id = result[0].values[0][0];
-        dbModule.saveDatabase();
-        res.status(201).json({ id, name, price, type: paperType, is_active: isActive === 1 });
+            const result = db.prepare('INSERT INTO papers (name, price, type, is_active) VALUES (?, ?, ?, ?)')
+                .run(name, price, type, is_active ?? 1);
+        const paper = db.prepare('SELECT * FROM papers WHERE id = ?').get(result.lastInsertRowid);
+        res.status(201).json(paper);
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(500).json({ error: error.message });
     }
 });
 
-// PUT update paper
-router.put('/:id', async (req, res) => {
+    // Update paper
+router.put('/:id', (req, res) => {
     try {
         const { name, price, type, is_active } = req.body;
-        const db = await dbModule.getDb();
-        const updates = [];
-        if (name !== undefined) updates.push(`name = '${name.replace(/'/g, "''")}'`);
-        if (price !== undefined) updates.push(`price = ${price}`);
-        if (type !== undefined) updates.push(`type = '${type}'`);
-        if (is_active !== undefined) updates.push(`is_active = ${is_active ? 1 : 0}`);
-        updates.push('updated_at = CURRENT_TIMESTAMP');
-        
-        db.run(`UPDATE papers SET ${updates.join(', ')} WHERE id = ${parseInt(req.params.id)}`);
-        dbModule.saveDatabase();
-        
-        const result = db.exec(`SELECT * FROM papers WHERE id = ${req.params.id}`);
-        if (!result || !result.length || !result[0].values.length) {
-            return res.status(404).json({ error: 'Paper not found' });
-        }
-        const row = result[0].values[0];
-        res.json({
-            id: row[0],
-            name: row[1],
-            price: row[2],
-            type: row[3],
-            is_active: row[4] === 1,
-            created_at: row[5],
-            updated_at: row[6],
-        });
+            db.prepare('UPDATE papers SET name = ?, price = ?, type = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(name, price, type, is_active, req.params.id);
+        const paper = db.prepare('SELECT * FROM papers WHERE id = ?').get(req.params.id);
+            if (!paper) return res.status(404).json({ error: 'Paper not found' });
+        res.json(paper);
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(500).json({ error: error.message });
     }
 });
 
-// DELETE paper
-router.delete('/:id', async (req, res) => {
+    // Delete paper
+router.delete('/:id', (req, res) => {
     try {
-        const db = await dbModule.getDb();
-        db.run(`DELETE FROM papers WHERE id = ${parseInt(req.params.id)}`);
-        dbModule.saveDatabase();
+            const result = db.prepare('DELETE FROM papers WHERE id = ?').run(req.params.id);
+            if (result.changes === 0) return res.status(404).json({ error: 'Paper not found' });
         res.json({ message: 'Paper deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-export default router;
+    return router;
+}

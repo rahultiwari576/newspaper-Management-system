@@ -1,9 +1,17 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 const Layout = ({ children }) => {
     const location = useLocation();
+    const navigate = useNavigate();
+    const { user, logout } = useAuth();
     const [sidebarOpen, setSidebarOpen] = useState(true);
+
+    const handleLogout = () => {
+        logout();
+        navigate('/login');
+    };
 
     const menuItems = [
         { path: '/', label: 'Dashboard', icon: '📊' },
@@ -66,17 +74,49 @@ const Layout = ({ children }) => {
                     <h1 style={{ margin: 0, fontSize: '24px' }}>
                         {menuItems.find((item) => item.path === location.pathname)?.label || 'Dashboard'}
                     </h1>
-                    <button
-                        onClick={() => setSidebarOpen(!sidebarOpen)}
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            fontSize: '20px',
-                            cursor: 'pointer',
-                        }}
-                    >
-                        {sidebarOpen ? '◀' : '▶'}
-                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        {user && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ textAlign: 'right' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>
+                                        {user.name}
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#666', textTransform: 'capitalize' }}>
+                                        {user.role}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleLogout}
+                                    style={{
+                                        background: '#e74c3c',
+                                        color: 'white',
+                                        border: 'none',
+                                        padding: '8px 16px',
+                                        borderRadius: '5px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: '500',
+                                        transition: 'background 0.3s'
+                                    }}
+                                    onMouseOver={(e) => e.target.style.background = '#c0392b'}
+                                    onMouseOut={(e) => e.target.style.background = '#e74c3c'}
+                                >
+                                    Logout
+                                </button>
+                            </div>
+                        )}
+                        <button
+                            onClick={() => setSidebarOpen(!sidebarOpen)}
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                fontSize: '20px',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            {sidebarOpen ? '◀' : '▶'}
+                        </button>
+                    </div>
                 </header>
                 <div style={{ padding: '30px' }}>{children}</div>
             </main>
